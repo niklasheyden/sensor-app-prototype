@@ -2,12 +2,14 @@
   "expo": {
     "name": "sensor-app",
     "slug": "sensor-app",
+    "icon": "./assets/icon.png",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
       "**/*"
     ],
+    "jsEngine": "jsc",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.niklasheyden.sensorapp",

@@ -5,8 +5,7 @@ import MapView, { Marker, Heatmap } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import { SegmentedButtons, Card, useTheme } from 'react-native-paper';
-import { LineChart, Grid, YAxis, XAxis } from 'react-native-svg-charts';
-import * as scale from 'd3-scale';
+import { VictoryLine, VictoryChart, VictoryAxis, VictoryTheme, VictoryScatter } from 'victory-native';
 
 const SUPABASE_URL = 'https://ugceawhapyzapxfuuvgl.supabase.co/';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -328,41 +327,50 @@ const DashboardScreen = () => {
         </MapView>
       </View>
       <Text style={styles.sectionTitle}>Real-Time {METRICS.find(m => m.value === selectedMetric)?.label} Graph</Text>
-      <Card style={styles.chartCard}>
-        <View style={{ flexDirection: 'row', height: 180, paddingVertical: 8 }}>
-          <YAxis
-            data={chartData}
-            contentInset={{ top: 20, bottom: 20 }}
-            svg={{ fontSize: 10, fill: '#888' }}
-            numberOfTicks={6}
-            min={Math.min(...chartData, 0)}
-            max={Math.max(...chartData, 1)}
-          />
-          <LineChart
-            style={{ flex: 1, marginLeft: 8 }}
-            data={chartData}
-            svg={{ stroke: theme.colors.primary, strokeWidth: 2 }}
-            contentInset={{ top: 20, bottom: 20 }}
-            curve={undefined}
+      <Card style={styles.chartCard} mode="outlined">
+        <View style={{ height: 250, padding: 10 }}>
+          <VictoryChart
+            theme={VictoryTheme.material}
+            height={200}
+            padding={{ top: 10, bottom: 40, left: 50, right: 20 }}
           >
-            <Grid svg={{ stroke: '#eee' }} />
-          </LineChart>
+            <VictoryAxis
+              dependentAxis
+              tickFormat={(tick) => `${tick}`}
+              style={{
+                axis: { stroke: '#888' },
+                tickLabels: { fontSize: 10, fill: '#888' }
+              }}
+            />
+            <VictoryAxis
+              tickFormat={(tick) => `${tick}`}
+              style={{
+                axis: { stroke: '#888' },
+                tickLabels: { fontSize: 10, fill: '#888' }
+              }}
+            />
+            <VictoryLine
+              data={chartData.map((value, index) => ({ x: index, y: value }))}
+              style={{
+                data: { stroke: theme.colors.primary, strokeWidth: 2 }
+              }}
+            />
+            <VictoryScatter
+              data={chartData.map((value, index) => ({ x: index, y: value }))}
+              size={3}
+              style={{
+                data: { fill: theme.colors.primary }
+              }}
+            />
+          </VictoryChart>
+          <Text style={{ textAlign: 'center', fontSize: 12, color: '#888', marginTop: 4 }}>
+            Most recent readings (right = newest)
+          </Text>
         </View>
-        <XAxis
-          style={{ marginHorizontal: -10, height: 20 }}
-          data={chartData}
-          formatLabel={(value, index) => `${index + 1}`}
-          contentInset={{ left: 30, right: 10 }}
-          svg={{ fontSize: 10, fill: '#888' }}
-          scale={scale.scaleLinear}
-        />
-        <Text style={{ textAlign: 'center', fontSize: 12, color: '#888', marginTop: 4 }}>
-          Most recent readings (right = newest)
-        </Text>
       </Card>
       <Text style={styles.sectionTitle}>Latest Sensor Reading</Text>
       {latest ? (
-        <Card style={styles.dataCard}>
+        <Card style={styles.dataCard} mode="outlined">
           <View style={styles.row}>
             <MaterialCommunityIcons name="thermometer" size={28} color={getTemperatureColor(latest.temperature)} />
             <Text style={styles.label}>Temperature</Text>
