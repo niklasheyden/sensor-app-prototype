@@ -1,16 +1,57 @@
 {
   "expo": {
-    "name": "SensorApp",
+    "name": "sensor-app",
     "slug": "sensor-app",
     "version": "1.0.0",
-    "sdkVersion": "53.0.0",
-    "platforms": ["ios", "android"],
     "orientation": "portrait",
-    "updates": {
-      "fallbackToCacheTimeout": 0
-    },
+    "userInterfaceStyle": "light",
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.niklasheyden.sensorapp",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to your sensor and receive real-time data.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to your sensor and receive real-time data.",
+        "NSLocationWhenInUseUsageDescription": "This app uses your location to georeference sensor data.",
+        "NSLocationAlwaysUsageDescription": "This app uses your location to georeference sensor data."
+      }
+    },
+    "android": {
+      "package": "com.niklasheyden.sensorapp",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to georeference sensor data."
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to use Bluetooth to connect to your sensor."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c25198a5-f08c-42c5-9d1d-6ed31bf0a28f"
+      }
+    }
   }
 }
