@@ -1,3 +1,0 @@
-Command line invocation:
-    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -workspace /Users/niklas/Documents/Coding/sensor-app/frontend/ios/SensorApp.xcworkspace -configuration Debug -scheme SensorApp -destination id=00008130-001C55E634C3001C
-

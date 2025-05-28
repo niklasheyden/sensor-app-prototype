@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import * as Location from 'expo-location';
-import MapView, { Marker, Heatmap } from 'react-native-maps';
+import MapView, { Marker, Heatmap, Polyline } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BleManager, Device, State } from 'react-native-ble-plx';
-import { SegmentedButtons, Card, useTheme } from 'react-native-paper';
+import { SegmentedButtons, Card, useTheme, Text as PaperText, Appbar, Divider } from 'react-native-paper';
 import { VictoryLine, VictoryChart, VictoryAxis, VictoryTheme, VictoryScatter } from 'victory-native';
+import { decode as atob } from 'base-64';
 
 const SUPABASE_URL = 'https://ugceawhapyzapxfuuvgl.supabase.co/';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -34,11 +35,50 @@ function getAirQualityLabel(value: number) {
 }
 
 const METRICS = [
-  { value: 'temperature', label: 'Temperature', icon: 'thermometer' },
-  { value: 'humidity', label: 'Humidity', icon: 'water-percent' },
-  { value: 'pressure', label: 'Pressure', icon: 'gauge' },
-  { value: 'air_quality', label: 'Air Quality', icon: 'weather-windy' },
+  { value: 'temperature', label: 'Temp.', icon: 'thermometer' },
+  { value: 'humidity', label: 'Hum.', icon: 'water-percent' },
+  { value: 'pressure', label: 'Pres.', icon: 'gauge' },
+  { value: 'air_quality', label: 'Air Q.', icon: 'weather-windy' },
 ];
+
+// Metric units for y-axis label
+const METRIC_UNITS: Record<string, string> = {
+  temperature: '°C',
+  humidity: '%',
+  pressure: 'hPa',
+  air_quality: '',
+};
+
+// Helper to get color for selected metric
+function getMetricColor(metric: string, value: number) {
+  if (metric === 'temperature') return getTemperatureColor(value);
+  if (metric === 'humidity') {
+    if (value < 30) return '#3498db'; // blue
+    if (value < 60) return '#27ae60'; // green
+    if (value < 80) return '#f39c12'; // orange
+    return '#e74c3c'; // red
+  }
+  if (metric === 'pressure') {
+    if (value < 1000) return '#3498db';
+    if (value < 1020) return '#27ae60';
+    if (value < 1040) return '#f39c12';
+    return '#e74c3c';
+  }
+  if (metric === 'air_quality') return getAirQualityLabel(value).color;
+  return '#000';
+}
+
+// Helper to get readings from the last 10 minutes
+function getReadingsLast10Minutes(data: any[]) {
+  const now = new Date();
+  return data.filter(d => {
+    const t = new Date(d.created_at);
+    return (now.getTime() - t.getTime()) <= 10 * 60 * 1000;
+  });
+}
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const MAX_WIDTH = 500;
 
 const DashboardScreen = () => {
   const [sensorData, setSensorData] = useState<any[]>([]);
@@ -222,6 +262,7 @@ const DashboardScreen = () => {
       clearInterval(interval);
       if (connectedDevice) {
         connectedDevice.cancelConnection();
+        setConnectedDevice(null);
       }
     };
   }, []);
@@ -236,20 +277,7 @@ const DashboardScreen = () => {
 
   // Calculate map region to fit all markers
   const getMapRegion = () => {
-    if (sensorData.length > 0) {
-      const lats = sensorData.map(d => d.latitude);
-      const lngs = sensorData.map(d => d.longitude);
-      const minLat = Math.min(...lats);
-      const maxLat = Math.max(...lats);
-      const minLng = Math.min(...lngs);
-      const maxLng = Math.max(...lngs);
-      return {
-        latitude: (minLat + maxLat) / 2,
-        longitude: (minLng + maxLng) / 2,
-        latitudeDelta: Math.max(0.01, (maxLat - minLat) * 1.5),
-        longitudeDelta: Math.max(0.01, (maxLng - minLng) * 1.5),
-      };
-    } else if (location) {
+    if (location) {
       return {
         latitude: location.latitude,
         longitude: location.longitude,
@@ -275,221 +303,304 @@ const DashboardScreen = () => {
       weight: d[selectedMetric],
     }));
 
-  // Prepare chart data for selected metric (last 30 readings, most recent last)
-  const chartData = sensorData.slice(0, 30).reverse().map((d, i) => d[selectedMetric]);
+  // Prepare chart data for selected metric (last 10 minutes, most recent last)
+  const readingsLast10Min = getReadingsLast10Minutes(sensorData).filter(d => {
+    const value = d[selectedMetric];
+    const t = new Date(d.created_at);
+    return typeof value === 'number' && !isNaN(value) && t instanceof Date && !isNaN(t.getTime());
+  });
+  const chartData = readingsLast10Min.map(d => {
+    const t = new Date(d.created_at);
+    const now = new Date();
+    const minutesAgo = (now.getTime() - t.getTime()) / 60000;
+    return { x: -minutesAgo, y: d[selectedMetric] };
+  }).sort((a, b) => a.x - b.x);
+  const yValues = chartData.map(d => d.y).filter(y => typeof y === 'number' && isFinite(y));
+  let yDomain: [number, number] | undefined = undefined;
+  if (yValues.length >= 2) {
+    let min = Math.min(...yValues);
+    let max = Math.max(...yValues);
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    } else {
+      const pad = (max - min) * 0.1;
+      min -= pad;
+      max += pad;
+    }
+    yDomain = [min, max];
+  }
+
+  // Calculate x-axis domain from data
+  const xValues = chartData.map(d => d.x);
+  let xDomain: [number, number] = [-10, 0];
+  if (xValues.length > 0) {
+    const minX = Math.min(...xValues);
+    const maxX = Math.max(...xValues);
+    // Add a small buffer to left/right
+    xDomain = [Math.floor(minX - 0.5), Math.ceil(maxX + 0.5)];
+  }
 
   const theme = useTheme();
 
+  // For map path, only show readings from the last 30 minutes or since last large time gap
+  function getCurrentSessionPath(data: any[]) {
+    if (data.length === 0) return [];
+    // Find the last large time gap (e.g., > 10 minutes)
+    const reversed = [...data].reverse();
+    const now = new Date();
+    let sessionStartIdx = 0;
+    for (let i = 1; i < reversed.length; i++) {
+      const t1 = new Date(reversed[i - 1].created_at);
+      const t2 = new Date(reversed[i].created_at);
+      if ((t1.getTime() - t2.getTime()) > 10 * 60 * 1000) {
+        sessionStartIdx = i;
+        break;
+      }
+    }
+    return reversed.slice(0, sessionStartIdx + 1).reverse();
+  }
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      <Text style={styles.title}>Sensor Dashboard</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 32, paddingHorizontal: 16 }}>
+      {/* Alert if sensor is not connected */}
+      {!connectedDevice ? (
+        <Card style={{ width: '100%', maxWidth: 500, alignSelf: 'center', backgroundColor: '#fffbe6', borderRadius: 18, marginBottom: 18, marginTop: 18, elevation: 0, padding: 18, borderWidth: 1, borderColor: '#fbbf24' }}>
+          <PaperText style={{ textAlign: 'center', fontSize: 16, color: '#b45309', marginBottom: 6 }}>
+            <MaterialCommunityIcons name="bluetooth-off" size={22} color="#b45309" />  Please turn on your sensor and enable Bluetooth to start receiving data.
+          </PaperText>
+        </Card>
+      ) : (
+        latest && (
+          <Card style={{ width: '100%', maxWidth: 500, alignSelf: 'center', backgroundColor: '#f4f6fb', borderRadius: 18, marginBottom: 18, marginTop: 18, elevation: 0, padding: 18 }}>
+            <PaperText style={{ textAlign: 'center', fontSize: 16, color: '#222', marginBottom: 6 }}>
+              {(() => {
+                // Context-aware messages
+                if (latest.temperature > 30) return '⚠️ High temperature detected! Stay hydrated and avoid prolonged exposure to heat.';
+                if (latest.temperature < 0) return '❄️ It is freezing! Dress warmly to avoid hypothermia.';
+                if (latest.humidity > 80) return '💧 High humidity detected. It may feel muggy or uncomfortable.';
+                if (latest.humidity < 20) return '🌵 Low humidity detected. Dry air can cause dehydration.';
+                if (latest.pressure < 950) return '⚠️ Low pressure detected. Weather may be unstable.';
+                if (latest.pressure > 1050) return '⚠️ High pressure detected. Weather may be unusually stable.';
+                if (latest.air_quality < 3) return '😷 Poor air quality! Consider wearing a mask or avoiding outdoor activity.';
+                if (latest.air_quality < 6) return '🌫️ Moderate air quality. Sensitive individuals should take care.';
+                return '✅ All sensor readings are in a healthy range. Enjoy your walk!';
+              })()}
+            </PaperText>
+          </Card>
+        )
+      )}
+      {/* Metric Selector */}
       <SegmentedButtons
         value={selectedMetric}
         onValueChange={setSelectedMetric}
         buttons={METRICS.map(m => ({ value: m.value, label: m.label, icon: m.icon }))}
-        style={styles.segmented}
+        style={{ marginBottom: 8, marginTop: 12, maxWidth: 500, alignSelf: 'center' }}
+        density="small"
       />
-      <View style={styles.mapContainer}>
+      {/* Map Section with Colored Path */}
+      <Card style={{ width: '100%', maxWidth: 500, marginTop: 8, marginBottom: 24, borderRadius: 18, alignSelf: 'center', elevation: 2 }}>
         <MapView
-          style={styles.map}
+          style={{ width: '100%', height: 220 }}
           region={getMapRegion()}
           showsUserLocation={true}
         >
+          {/* Markers for each reading */}
           {sensorData.filter(d => d.latitude && d.longitude).map((d, idx) => (
             <Marker
               key={idx}
               coordinate={{ latitude: d.latitude, longitude: d.longitude }}
-              pinColor={getTemperatureColor(d.temperature)}
+              pinColor={getMetricColor(selectedMetric, d[selectedMetric])}
               title={`Sensor Reading`}
-              description={`Temp: ${d.temperature}°C\nHumidity: ${d.humidity}%\nPressure: ${d.pressure} hPa\nAir: ${d.air_quality}`}
+              description={(() => {
+                if (selectedMetric === 'temperature') return `Temp: ${d.temperature}°C`;
+                if (selectedMetric === 'humidity') return `Humidity: ${d.humidity}%`;
+                if (selectedMetric === 'pressure') return `Pressure: ${d.pressure} hPa`;
+                if (selectedMetric === 'air_quality') return `Air Quality: ${getAirQualityLabel(d.air_quality).label}`;
+                return '';
+              })()}
             />
           ))}
-          {/*
-          // Heatmap is only available in a custom dev client or bare workflow
-          {heatmapPoints.length > 0 && (
-            <Heatmap
-              points={heatmapPoints}
-              opacity={0.7}
-              radius={40}
-              gradient={{
-                colors: [
-                  '#00f', '#0ff', '#0f0', '#ff0', '#f90', '#f00'
-                ],
-                startPoints: [0.1, 0.3, 0.5, 0.7, 0.9, 1],
-                colorMapSize: 256,
-              }}
-            />
-          )}
-          */}
+          {/* Colored path for current session */}
+          {(() => {
+            const path = getCurrentSessionPath(sensorData).slice(-30);
+            const lines = [];
+            for (let i = 1; i < path.length; i++) {
+              const prev = path[i - 1];
+              const curr = path[i];
+              if (
+                prev.latitude && prev.longitude && curr.latitude && curr.longitude &&
+                typeof curr[selectedMetric] === 'number'
+              ) {
+                lines.push(
+                  <Polyline
+                    key={`segment-${i}`}
+                    coordinates={[
+                      { latitude: prev.latitude, longitude: prev.longitude },
+                      { latitude: curr.latitude, longitude: curr.longitude }
+                    ]}
+                    strokeColor={getMetricColor(selectedMetric, curr[selectedMetric])}
+                    strokeWidth={6}
+                    lineCap="round"
+                    lineJoin="round"
+                    geodesic={true}
+                  />
+                );
+              }
+            }
+            return lines;
+          })()}
         </MapView>
-      </View>
-      <Text style={styles.sectionTitle}>Real-Time {METRICS.find(m => m.value === selectedMetric)?.label} Graph</Text>
-      <Card style={styles.chartCard} mode="outlined">
-        <View style={{ height: 250, padding: 10 }}>
-          <VictoryChart
-            theme={VictoryTheme.material}
-            height={200}
-            padding={{ top: 10, bottom: 40, left: 50, right: 20 }}
-          >
-            <VictoryAxis
-              dependentAxis
-              tickFormat={(tick) => `${tick}`}
-              style={{
-                axis: { stroke: '#888' },
-                tickLabels: { fontSize: 10, fill: '#888' }
-              }}
-            />
-            <VictoryAxis
-              tickFormat={(tick) => `${tick}`}
-              style={{
-                axis: { stroke: '#888' },
-                tickLabels: { fontSize: 10, fill: '#888' }
-              }}
-            />
-            <VictoryLine
-              data={chartData.map((value, index) => ({ x: index, y: value }))}
-              style={{
-                data: { stroke: theme.colors.primary, strokeWidth: 2 }
-              }}
-            />
-            <VictoryScatter
-              data={chartData.map((value, index) => ({ x: index, y: value }))}
-              size={3}
-              style={{
-                data: { fill: theme.colors.primary }
-              }}
-            />
-          </VictoryChart>
-          <Text style={{ textAlign: 'center', fontSize: 12, color: '#888', marginTop: 4 }}>
-            Most recent readings (right = newest)
-          </Text>
-        </View>
       </Card>
-      <Text style={styles.sectionTitle}>Latest Sensor Reading</Text>
-      {latest ? (
-        <Card style={styles.dataCard} mode="outlined">
-          <View style={styles.row}>
-            <MaterialCommunityIcons name="thermometer" size={28} color={getTemperatureColor(latest.temperature)} />
-            <Text style={styles.label}>Temperature</Text>
-            <Text style={[styles.value, { color: getTemperatureColor(latest.temperature) }]}> {latest.temperature} °C</Text>
+      {/* Latest Sensor Reading Grid */}
+      <Card style={{ width: '100%', maxWidth: 500, alignSelf: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 24, elevation: 2, padding: 16 }}>
+        <PaperText variant="titleMedium" style={{ textAlign: 'center', marginBottom: 16, color: theme.colors.onSurface }}>Latest Sensor Readings</PaperText>
+        {latest ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 }}>
+            {/* Temperature */}
+            <View style={{ flexBasis: '48%', backgroundColor: '#f4f6fb', borderRadius: 14, padding: 14, marginBottom: 12, alignItems: 'center', elevation: 1 }}>
+              <MaterialCommunityIcons name="thermometer" size={28} color={getTemperatureColor(latest.temperature)} />
+              <PaperText style={{ color: getTemperatureColor(latest.temperature), fontWeight: 'bold', fontSize: 18 }}>{latest.temperature} °C</PaperText>
+              <PaperText style={{ color: '#888', fontSize: 13 }}>Temperature</PaperText>
+            </View>
+            {/* Humidity */}
+            <View style={{ flexBasis: '48%', backgroundColor: '#f4f6fb', borderRadius: 14, padding: 14, marginBottom: 12, alignItems: 'center', elevation: 1 }}>
+              <MaterialCommunityIcons name="water-percent" size={28} color="#3498db" />
+              <PaperText style={{ color: '#3498db', fontWeight: 'bold', fontSize: 18 }}>{latest.humidity} %</PaperText>
+              <PaperText style={{ color: '#888', fontSize: 13 }}>Humidity</PaperText>
+            </View>
+            {/* Pressure */}
+            <View style={{ flexBasis: '48%', backgroundColor: '#f4f6fb', borderRadius: 14, padding: 14, marginBottom: 12, alignItems: 'center', elevation: 1 }}>
+              <MaterialCommunityIcons name="gauge" size={28} color="#9b59b6" />
+              <PaperText style={{ color: '#9b59b6', fontWeight: 'bold', fontSize: 18 }}>{latest.pressure} hPa</PaperText>
+              <PaperText style={{ color: '#888', fontSize: 13 }}>Pressure</PaperText>
+            </View>
+            {/* Air Quality */}
+            <View style={{ flexBasis: '48%', backgroundColor: '#f4f6fb', borderRadius: 14, padding: 14, marginBottom: 12, alignItems: 'center', elevation: 1 }}>
+              <MaterialCommunityIcons name="weather-windy" size={28} color={getAirQualityLabel(latest.air_quality).color} />
+              <PaperText style={{ color: getAirQualityLabel(latest.air_quality).color, fontWeight: 'bold', fontSize: 18 }}>{getAirQualityLabel(latest.air_quality).label}</PaperText>
+              <PaperText style={{ color: '#888', fontSize: 13 }}>Air Quality</PaperText>
+            </View>
           </View>
-          <View style={styles.row}>
-            <MaterialCommunityIcons name="water-percent" size={28} color="#3498db" />
-            <Text style={styles.label}>Humidity</Text>
-            <Text style={[styles.value, { color: "#3498db" }]}> {latest.humidity} %</Text>
-          </View>
-          <View style={styles.row}>
-            <MaterialCommunityIcons name="gauge" size={28} color="#9b59b6" />
-            <Text style={styles.label}>Pressure</Text>
-            <Text style={[styles.value, { color: "#9b59b6" }]}> {latest.pressure} hPa</Text>
-          </View>
-          <View style={styles.row}>
-            <MaterialCommunityIcons name="weather-windy" size={28} color={getAirQualityLabel(latest.air_quality).color} />
-            <Text style={styles.label}>Air Quality</Text>
-            <Text style={[styles.value, { color: getAirQualityLabel(latest.air_quality).color }]}> {getAirQualityLabel(latest.air_quality).label}</Text>
-          </View>
-          <View style={styles.row}>
-            <MaterialCommunityIcons name="map-marker" size={28} color="#e67e22" />
-            <Text style={styles.label}>Location</Text>
-            <Text style={styles.value}> {latest.latitude?.toFixed(5)}, {latest.longitude?.toFixed(5)}</Text>
-          </View>
-        </Card>
-      ) : (
-        <Text style={styles.value}>No sensor data available.</Text>
-      )}
+        ) : (
+          <PaperText style={{ textAlign: 'center', color: '#888', fontSize: 16, padding: 24 }}>
+            No sensor data available.
+          </PaperText>
+        )}
+      </Card>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    backgroundColor: '#f4f6fb',
-    padding: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 18,
-    color: '#222',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginTop: 24,
-    marginBottom: 12,
-    color: '#333',
-    textAlign: 'center',
-  },
-  segmented: {
-    marginBottom: 12,
-    alignSelf: 'center',
-  },
-  mapContainer: {
-    width: Dimensions.get('window').width - 40,
-    maxWidth: 500,
-    borderRadius: 16,
+  mapCard: {
+    width: '100%',
+    maxWidth: MAX_WIDTH,
+    height: 220,
+    borderRadius: 18,
     overflow: 'hidden',
-    elevation: 4,
+    marginTop: 18,
+    marginBottom: 18,
+    alignSelf: 'center',
+    backgroundColor: '#fff',
+    elevation: 3,
     shadowColor: '#000',
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.10,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
-    marginBottom: 24,
-    height: 250,
   },
   map: {
     width: '100%',
     height: '100%',
   },
-  chartCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 12,
+  metricSelectorContainer: {
     width: '100%',
-    maxWidth: 500,
-    marginBottom: 24,
+    maxWidth: MAX_WIDTH,
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  metricButton: {
+    backgroundColor: '#f4f6fb',
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  metricButtonSelected: {
+    backgroundColor: '#4f46e5',
+    borderColor: '#4f46e5',
+  },
+  graphCard: {
+    width: '100%',
+    maxWidth: MAX_WIDTH,
+    alignSelf: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    marginBottom: 18,
     elevation: 3,
     shadowColor: '#000',
     shadowOpacity: 0.10,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    padding: 16,
+  },
+  graphContainer: {
+    width: '100%',
+    height: 250,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 10,
+    color: '#333',
+    textAlign: 'center',
   },
   dataCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
     width: '100%',
-    maxWidth: 500,
-    marginBottom: 24,
+    maxWidth: MAX_WIDTH,
+    alignSelf: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    marginBottom: 18,
     elevation: 3,
     shadowColor: '#000',
     shadowOpacity: 0.10,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    padding: 16,
   },
-  row: {
+  dataGrid: {
+    width: '100%',
+    flexDirection: 'column',
+    gap: 0,
+  },
+  dataRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 18,
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-  label: {
-    flex: 1,
-    fontSize: 18,
+  dataLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dataLabelText: {
+    fontSize: 16,
     color: '#555',
-    marginLeft: 12,
+    marginLeft: 6,
   },
-  value: {
-    fontSize: 18,
+  dataValue: {
+    fontSize: 16,
     fontWeight: 'bold',
-    marginLeft: 12,
+    minWidth: 0,
+    textAlign: 'right',
+    flexShrink: 1,
   },
 });
 
