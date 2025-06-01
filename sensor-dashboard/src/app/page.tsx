@@ -8,6 +8,7 @@ import HeatMap from '../components/HeatMap';
 import { saveAs } from 'file-saver';
 import TimeSeriesChart from '../components/TimeSeriesChart';
 import SensorRadarChart from '../components/RadarChart';
+import ChatGPTPanel from '../components/ChatGPTPanel';
 
 interface SensorData {
   id: number;
@@ -89,6 +90,22 @@ export default function Home() {
     saveAs(blob, 'sensor_data.csv');
   }
 
+  // Prepare summary for ChatGPTPanel
+  const values = filteredData.map(d => (d as any)[metric]).filter((v) => typeof v === 'number');
+  const summary = {
+    metric,
+    min: values.length ? Math.min(...values) : null,
+    max: values.length ? Math.max(...values) : null,
+    avg: values.length ? values.reduce((a, b) => a + b, 0) / values.length : null,
+    latest: values.length ? values[0] : null,
+    count: filteredData.length,
+    unit: getMetricUnit(metric),
+    dateRange: filteredData.length ? {
+      start: filteredData[filteredData.length - 1].created_at,
+      end: filteredData[0].created_at,
+    } : null,
+  };
+
   return (
     <main className="p-4 sm:p-8 bg-gray-50 min-h-screen">
       <div className="max-w-5xl mx-auto">
@@ -116,27 +133,42 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Map Container */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6 border border-gray-200">
-          {!loading && <HeatMap data={filteredData} metric={metric} />}
-          {/* Time Slider */}
-          <div className="my-4 flex flex-col items-center">
-            <label htmlFor="hour-slider" className="font-semibold mb-1 text-gray-700">Hour: <span className="font-mono">{selectedHour}:00</span></label>
-            <input
-              id="hour-slider"
-              type="range"
-              min={0}
-              max={23}
-              value={selectedHour}
-              onChange={(e) => setSelectedHour(Number(e.target.value))}
-              className="w-full max-w-md accent-blue-600"
+        {/* Map and Chat Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 items-stretch">
+          {/* Map Container */}
+          <div className="bg-white rounded-lg shadow p-4 border border-gray-200 lg:col-span-2 h-[400px] flex flex-col">
+            {!loading && <HeatMap data={filteredData} metric={metric} />}
+            {/* Time Slider */}
+            <div className="my-4 flex flex-col items-center">
+              <label htmlFor="hour-slider" className="font-semibold mb-1 text-gray-700">Hour: <span className="font-mono">{selectedHour}:00</span></label>
+              <input
+                id="hour-slider"
+                type="range"
+                min={0}
+                max={23}
+                value={selectedHour}
+                onChange={(e) => setSelectedHour(Number(e.target.value))}
+                className="w-full max-w-md accent-blue-600"
+              />
+              <button
+                className="mt-2 px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold"
+                onClick={() => setSelectedHour(0)}
+              >
+                Reset Hour
+              </button>
+            </div>
+          </div>
+          {/* ChatGPT Panel */}
+          <div className="lg:col-span-1 h-[400px] flex flex-col">
+            <ChatGPTPanel
+              sensorContext={{
+                summary: filteredData.length > 0 ? summary : {},
+                locationData: filteredData.length > 0 ? filteredData.slice(0, 10) : []
+              }}
+              className="h-full"
+              loading={loading}
+              hasData={filteredData.length > 0}
             />
-            <button
-              className="mt-2 px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold"
-              onClick={() => setSelectedHour(0)}
-            >
-              Reset Hour
-            </button>
           </div>
         </div>
 
