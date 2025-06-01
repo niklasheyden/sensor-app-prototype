@@ -18,7 +18,7 @@
         "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to your sensor and receive real-time data.",
         "NSLocationWhenInUseUsageDescription": "This app uses your location to georeference sensor data.",
         "NSLocationAlwaysUsageDescription": "This app uses your location to georeference sensor data."
-      }
+  }
     },
     "android": {
       "package": "com.niklasheyden.sensorapp",
